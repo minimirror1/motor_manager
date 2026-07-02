@@ -8,6 +8,7 @@ target_include_directories(motor_manager PUBLIC
 target_link_libraries(motor_manager
   PUBLIC  motor_interface::motor_interface
   PUBLIC  "${MOTOR_MANAGER_IGH_ETHERCAT_LIB}"
+  PRIVATE ament_index_cpp::ament_index_cpp
   PRIVATE ethercat::ethercat
   PRIVATE canopen::canopen
   PRIVATE serial::serial

@@ -75,6 +75,7 @@ enum class DriverState {
 
 struct driver_config_t {
     uint8_t id;
+    std::string model;
     uint32_t pulse_per_revolution;
     double rated_effort;
     double unit_effort;

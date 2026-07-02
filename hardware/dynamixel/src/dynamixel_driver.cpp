@@ -211,6 +211,81 @@ void dynamixel::DynamixelDriver::loadParameters(const std::string& param_file)
     number_of_tx_interfaces_ = t_idx;
 }
 
+void dynamixel::DynamixelDriver::loadModelParameters(const std::string& model_file)
+{
+    serial_protocol_.configured = true;
+    serial_protocol_.broadcast_id = 254;
+    serial_protocol_.instruction_read = 2;
+    serial_protocol_.instruction_write = 3;
+    serial_protocol_.instruction_status = 85;
+    serial_protocol_.instruction_bulk_read = 146;
+    serial_protocol_.instruction_bulk_write = 147;
+
+    loadModelFile(model_file);
+
+    uint8_t i_idx{0};
+
+    items_[i_idx] = modelEntry("Operating Mode", motor_interface::ID_OPERATING_MODE, motor_interface::DataType::U8);
+    motor_interface::fill<uint8_t>(3, items_[i_idx++].data);
+
+    items_[i_idx] = modelEntry("Current Limit", motor_interface::ID_MAX_EFFORT, motor_interface::DataType::U16);
+    motor_interface::fill<uint16_t>(
+        static_cast<uint16_t>(std::max<int16_t>(effort(config_.rated_effort), 0)),
+        items_[i_idx++].data);
+
+    items_[i_idx] = modelEntry("Min Position Limit", motor_interface::ID_MIN_POSITION_LIMIT, motor_interface::DataType::S32);
+    motor_interface::fill<int32_t>(position(config_.lower), items_[i_idx++].data);
+
+    items_[i_idx] = modelEntry("Max Position Limit", motor_interface::ID_MAX_POSITION_LIMIT, motor_interface::DataType::S32);
+    motor_interface::fill<int32_t>(position(config_.upper), items_[i_idx++].data);
+
+    items_[i_idx] = modelEntry("Profile Velocity", motor_interface::ID_PROFILE_VELOCITY, motor_interface::DataType::U32);
+    motor_interface::fill<uint32_t>(
+        static_cast<uint32_t>(std::llround(std::fabs(config_.profile_velocity) * DEG_TO_RAD / velocity_unit_)),
+        items_[i_idx++].data);
+
+    items_[i_idx] = modelEntry("Profile Acceleration", motor_interface::ID_PROFILE_ACCELERATION, motor_interface::DataType::U32);
+    const double acceleration = config_.profile_acceleration > 0.0 ?
+        config_.profile_acceleration : config_.acceleration;
+    motor_interface::fill<uint32_t>(accelerationRawFromDegreePerSec2(acceleration), items_[i_idx++].data);
+
+    number_of_items_ = i_idx;
+
+    uint8_t a_idx{0};
+    interfaces_[a_idx++] = motor_interface::entry_table_t{
+        motor_interface::ID_RXPDO,
+        0,
+        0,
+        motor_interface::DataType::U8,
+        0,
+        {0}
+    };
+
+    interfaces_[a_idx++] = modelEntry("Torque Enable", motor_interface::ID_CONTROLWORD, motor_interface::DataType::U8);
+    interfaces_[a_idx++] = modelEntry("Goal Position", motor_interface::ID_TARGET_POSITION, motor_interface::DataType::S32);
+    interfaces_[a_idx++] = modelEntry("Goal Velocity", motor_interface::ID_TARGET_VELOCITY, motor_interface::DataType::S32);
+    interfaces_[a_idx++] = modelEntry("Goal Current", motor_interface::ID_TARGET_EFFORT, motor_interface::DataType::S16);
+
+    interfaces_[a_idx++] = motor_interface::entry_table_t{
+        motor_interface::ID_TXPDO,
+        0,
+        0,
+        motor_interface::DataType::U8,
+        0,
+        {0}
+    };
+
+    interfaces_[a_idx++] = modelEntry("Torque Enable", motor_interface::ID_STATUSWORD, motor_interface::DataType::U8);
+    interfaces_[a_idx++] = modelEntry("Hardware Error Status", motor_interface::ID_ERRORCODE, motor_interface::DataType::U8);
+    interfaces_[a_idx++] = modelEntry("Present Position", motor_interface::ID_CURRENT_POSITION, motor_interface::DataType::S32);
+    interfaces_[a_idx++] = modelEntry("Present Velocity", motor_interface::ID_CURRENT_VELOCITY, motor_interface::DataType::S32);
+    interfaces_[a_idx++] = modelEntry("Present Current", motor_interface::ID_CURRENT_EFFORT, motor_interface::DataType::S16);
+
+    number_of_interfaces_ = a_idx;
+    number_of_rx_interfaces_ = 4;
+    number_of_tx_interfaces_ = 5;
+}
+
 bool dynamixel::DynamixelDriver::isEnabled(
     const uint8_t* data,
     motor_interface::DriverState& driver_state,
@@ -369,6 +444,24 @@ void dynamixel::DynamixelDriver::loadModelFile(const std::string& model_file)
             model_entries_[parts[2]] = entry;
         }
     }
+}
+
+motor_interface::entry_table_t dynamixel::DynamixelDriver::modelEntry(
+    const std::string& name,
+    uint8_t id,
+    motor_interface::DataType type) const
+{
+    auto iter = model_entries_.find(name);
+    if (iter == model_entries_.end()) {
+        throw std::runtime_error("Dynamixel control table name not found: " + name);
+    }
+
+    motor_interface::entry_table_t entry{};
+    entry.id = id;
+    entry.index = iter->second.address;
+    entry.size = iter->second.size;
+    entry.type = type;
+    return entry;
 }
 
 bool dynamixel::DynamixelDriver::loadEntry(

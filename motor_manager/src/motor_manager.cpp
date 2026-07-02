@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <ament_index_cpp/get_package_share_directory.hpp>
 #include <yaml-cpp/yaml.h>
 
 #include "motor_manager/motor_manager.hpp"
@@ -37,6 +38,18 @@ void stack_prefault()
 {
     unsigned char dummy[8 * 1024];
     std::memset(dummy, 0, sizeof(dummy));
+}
+
+std::filesystem::path dynamixelModelPath(const std::string& model)
+{
+    if (model.empty()) throw std::runtime_error("Dynamixel driver requires model.");
+    if (model.find('/') != std::string::npos || model.find('\\') != std::string::npos) {
+        throw std::runtime_error("Dynamixel model must be a model name, not a path.");
+    }
+
+    const std::filesystem::path share_dir =
+        ament_index_cpp::get_package_share_directory("motor_manager");
+    return share_dir / "dynamixel" / "control_table" / (model + ".model");
 }
 
 } // namespace
@@ -119,6 +132,7 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
     if (!masters || !masters.IsSequence()) throw std::runtime_error("Invalid masters configuration.");
 
     uint8_t s_idx{0};
+    std::unordered_map<uint8_t, std::string> slave_models;
     masters_.reserve(motor_interface::MAX_MASTER_SIZE);
     serial_masters_.reserve(motor_interface::MAX_MASTER_SIZE);
     controller_indices_.reserve(motor_interface::MAX_CONTROLLER_SIZE);
@@ -147,6 +161,7 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
                 s_cfg.controller_index = slaves[i]["controller_index"].as<uint8_t>();
                 s_cfg.master_id = m_cfg.id;
                 s_cfg.driver_id = slaves[i]["driver_id"].as<uint8_t>();
+                if (slaves[i]["model"]) s_cfg.model = slaves[i]["model"].as<std::string>();
                 s_cfg.alias = slaves[i]["alias"].as<uint16_t>();
                 s_cfg.position = slaves[i]["position"].as<uint16_t>();
                 s_cfg.vendor_id = slaves[i]["vendor_id"].as<uint32_t>();
@@ -154,6 +169,7 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
                 s_cfg.profile_mode = slaves[i]["profile_mode"].as<uint8_t>();
 
                 controllers_[s_cfg.controller_index] = std::make_unique<ethercat::EthercatController>(s_cfg);
+                if (!s_cfg.model.empty()) slave_models[s_cfg.controller_index] = s_cfg.model;
                 controller_indices_.push_back(s_cfg.controller_index);
                 s_idx++;
             }
@@ -169,10 +185,12 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
                 s_cfg.controller_index = slaves[i]["controller_index"].as<uint8_t>();
                 s_cfg.master_id = m_cfg.id;
                 s_cfg.driver_id = slaves[i]["driver_id"].as<uint8_t>();
+                if (slaves[i]["model"]) s_cfg.model = slaves[i]["model"].as<std::string>();
                 s_cfg.can_id = slaves[i]["can_id"].as<uint8_t>();
                 s_cfg.profile_mode = slaves[i]["profile_mode"].as<uint8_t>();
 
                 controllers_[s_cfg.controller_index] = std::make_unique<canopen::CanopenController>(s_cfg);
+                if (!s_cfg.model.empty()) slave_models[s_cfg.controller_index] = s_cfg.model;
                 controller_indices_.push_back(s_cfg.controller_index);
                 s_idx++;
             }
@@ -190,10 +208,12 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
                 s_cfg.controller_index = slaves[i]["controller_index"].as<uint8_t>();
                 s_cfg.master_id = m_cfg.id;
                 s_cfg.driver_id = slaves[i]["driver_id"].as<uint8_t>();
+                if (slaves[i]["model"]) s_cfg.model = slaves[i]["model"].as<std::string>();
                 s_cfg.bus_id = slaves[i]["bus_id"].as<uint8_t>();
                 s_cfg.profile_mode = slaves[i]["profile_mode"].as<uint8_t>();
 
                 controllers_[s_cfg.controller_index] = std::make_unique<serial::SerialController>(s_cfg);
+                if (!s_cfg.model.empty()) slave_models[s_cfg.controller_index] = s_cfg.model;
                 controller_indices.push_back(s_cfg.controller_index);
                 s_idx++;
             }
@@ -210,10 +230,12 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
                 s_cfg.controller_index = slaves[i]["controller_index"].as<uint8_t>();
                 s_cfg.master_id = m_cfg.id;
                 s_cfg.driver_id = slaves[i]["driver_id"].as<uint8_t>();
+                if (slaves[i]["model"]) s_cfg.model = slaves[i]["model"].as<std::string>();
                 s_cfg.can_id = slaves[i]["can_id"].as<uint8_t>();
                 s_cfg.profile_mode = slaves[i]["profile_mode"].as<uint8_t>();
 
                 controllers_[s_cfg.controller_index] = std::make_unique<socketcan::SocketcanController>(s_cfg);
+                if (!s_cfg.model.empty()) slave_models[s_cfg.controller_index] = s_cfg.model;
                 controller_indices_.push_back(s_cfg.controller_index);
                 s_idx++;
             }
@@ -228,11 +250,15 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
     YAML::Node drivers = root["drivers"];
     if (!drivers || !drivers.IsSequence()) throw std::runtime_error("Invalid drivers configuration.");
 
+    std::unordered_map<uint8_t, DriverType> driver_types;
+    std::unordered_map<uint8_t, std::string> driver_models;
     drivers_.reserve(motor_interface::MAX_DRIVER_SIZE);
     for (const auto& d : drivers) {
         const std::string driver_type = d["type"].as<std::string>();
+        const DriverType parsed_driver_type = toDriverType(driver_type);
         motor_interface::driver_config_t d_cfg{};
         d_cfg.id = d["id"].as<uint8_t>();
+        if (d["model"]) d_cfg.model = d["model"].as<std::string>();
         d_cfg.pulse_per_revolution = d["pulse_per_revolution"].as<uint32_t>();
         d_cfg.rated_effort = d["rated_effort"].as<double>();
         d_cfg.unit_effort = d["unit_effort"].as<double>();
@@ -248,17 +274,28 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
         d_cfg.profile_velocity_value = d["profile_velocity_value"].as<int8_t>();
         d_cfg.profile_effort_value = d["profile_effort_value"].as<int8_t>();
 
-        switch (toDriverType(driver_type)) {
+        if (driver_types.find(d_cfg.id) != driver_types.end()) {
+            throw std::runtime_error("Duplicate driver ID.");
+        }
+        driver_types[d_cfg.id] = parsed_driver_type;
+        if (!d_cfg.model.empty()) driver_models[d_cfg.id] = d_cfg.model;
+
+        switch (parsed_driver_type) {
         case DriverType::Minas: {
+            if (!d_cfg.model.empty()) throw std::runtime_error("Non-Dynamixel driver cannot use model.");
             drivers_[d_cfg.id] = std::make_unique<minas::MinasDriver>(d_cfg);
             break;
         } case DriverType::Zeroerr: {
+            if (!d_cfg.model.empty()) throw std::runtime_error("Non-Dynamixel driver cannot use model.");
             drivers_[d_cfg.id] = std::make_unique<zeroerr::ZeroerrDriver>(d_cfg);
             break;
         } case DriverType::Dynamixel: {
+            if (d_cfg.model.empty()) throw std::runtime_error("Dynamixel driver requires model.");
+            if (d["param_file"]) throw std::runtime_error("Dynamixel driver no longer accepts param_file; use model.");
             drivers_[d_cfg.id] = std::make_unique<dynamixel::DynamixelDriver>(d_cfg);
             break;
         } case DriverType::Cubemars: {
+            if (!d_cfg.model.empty()) throw std::runtime_error("Non-Dynamixel driver cannot use model.");
             drivers_[d_cfg.id] = std::make_unique<cubemars::CubemarsDriver>(d_cfg);
             break;
         } default: {
@@ -266,19 +303,48 @@ void motor_manager::MotorManager::loadConfigurations(const std::string& config_f
         }
         }
 
-        std::filesystem::path param_path = d["param_file"].as<std::string>();
-        if (param_path.is_absolute()) {
-            param_path = param_path.lexically_normal();
+        if (parsed_driver_type == DriverType::Dynamixel) {
+            auto* driver = dynamic_cast<dynamixel::DynamixelDriver*>(drivers_.at(d_cfg.id).get());
+            if (!driver) throw std::runtime_error("Failed to cast Dynamixel driver.");
+            driver->loadModelParameters(dynamixelModelPath(d_cfg.model).lexically_normal().string());
         } else {
-            param_path = (std::filesystem::path(config_file).parent_path() / param_path).lexically_normal();
+            std::filesystem::path param_path = d["param_file"].as<std::string>();
+            if (param_path.is_absolute()) {
+                param_path = param_path.lexically_normal();
+            } else {
+                param_path = (std::filesystem::path(config_file).parent_path() / param_path).lexically_normal();
+            }
+
+            const std::string ext = param_path.extension().string();
+            if (ext != ".yaml" && ext != ".yml") {
+                param_path /= driver_type + ".yaml";
+            }
+
+            drivers_.at(d_cfg.id)->loadParameters(param_path.lexically_normal().string());
+        }
+    }
+
+    for (uint8_t controller_index = 0; controller_index < motor_interface::MAX_CONTROLLER_SIZE; ++controller_index) {
+        if (!controllers_[controller_index]) continue;
+
+        const uint8_t driver_id = controllers_[controller_index]->driver_id();
+        auto driver_type_iter = driver_types.find(driver_id);
+        if (driver_type_iter == driver_types.end()) {
+            throw std::runtime_error("Controller references unknown driver ID.");
         }
 
-        const std::string ext = param_path.extension().string();
-        if (ext != ".yaml" && ext != ".yml") {
-            param_path /= driver_type + ".yaml";
+        auto slave_model_iter = slave_models.find(controller_index);
+        if (driver_type_iter->second == DriverType::Dynamixel) {
+            if (slave_model_iter == slave_models.end() || slave_model_iter->second.empty()) {
+                throw std::runtime_error("Dynamixel slave requires model.");
+            }
+            const std::string& driver_model = driver_models.at(driver_id);
+            if (slave_model_iter->second != driver_model) {
+                throw std::runtime_error("Dynamixel slave model does not match driver model.");
+            }
+        } else if (slave_model_iter != slave_models.end() && !slave_model_iter->second.empty()) {
+            throw std::runtime_error("Non-Dynamixel slave cannot use model.");
         }
-
-        drivers_.at(d_cfg.id)->loadParameters(param_path.lexically_normal().string());
     }
 }
 

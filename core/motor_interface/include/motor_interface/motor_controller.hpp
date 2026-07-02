@@ -1,6 +1,8 @@
 #ifndef MOTOR_INTERFACE_MOTOR_CONTROLLER_HPP_
 #define MOTOR_INTERFACE_MOTOR_CONTROLLER_HPP_
 
+#include <string>
+
 #include "common_motor_interface/motor_frame.hpp"
 #include "motor_interface/motor_master.hpp"
 #include "motor_interface/motor_driver.hpp"
@@ -13,6 +15,7 @@ struct slave_config_t {
     uint8_t controller_index;
     uint8_t master_id;
     uint8_t driver_id;
+    std::string model;
     uint16_t alias{};
     uint16_t position{};
     uint32_t vendor_id{};

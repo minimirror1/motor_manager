@@ -19,6 +19,8 @@ public:
 
     void loadParameters(const std::string& param_file) override;
 
+    void loadModelParameters(const std::string& model_file);
+
     bool isEnabled(const uint8_t* data, motor_interface::DriverState& driver_state, uint8_t* out) override;
 
     bool isDisabled(const uint8_t* data, motor_interface::DriverState& driver_state, uint8_t* out) override;
@@ -44,6 +46,11 @@ private:
     };
 
     void loadModelFile(const std::string& model_file);
+
+    motor_interface::entry_table_t modelEntry(
+        const std::string& name,
+        uint8_t id,
+        motor_interface::DataType type) const;
 
     bool loadEntry(const YAML::Node& node, motor_interface::entry_table_t& entry, bool marker_allowed) const;
 
